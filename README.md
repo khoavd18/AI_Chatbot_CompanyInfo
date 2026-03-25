@@ -465,9 +465,3 @@ Suggested options:
 - Apache-2.0
 
 ---
-
-> If you want, this README can be further customized into one of these styles:
->
-> 1. **HR-friendly portfolio README** (shorter, more polished, less technical)
-> 2. **Tech interviewer README** (deeper architecture and trade-off discussion)
-> 3. **Open-source style README** (installation + usage + config + contribution)
