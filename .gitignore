@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual env
+env/
+.venv/
+venv/
+ENV/
+
+# Logs / temp
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# Test / type check / notebook
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Model / HF cache
+.huggingface/
+hf_cache/
+cache/
+models/
+checkpoints/
+
+# Data
+data/raw/
+data/processed/
+database_export_*.json
+*_completed.json
+*_enriched.json
+
+# Vector DB / local storage
+qdrant_storage/
+storage/
+*.sqlite
+*.db
+*.pkl
+*.joblib

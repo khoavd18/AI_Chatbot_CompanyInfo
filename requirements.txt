@@ -1,0 +1,11 @@
+beautifulsoup4
+fastapi
+pydantic
+pyyaml
+qdrant-client
+requests
+sentence-transformers
+streamlit
+uvicorn
+bitsandbytes
+accelerate
