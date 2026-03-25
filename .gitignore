@@ -54,3 +54,5 @@ storage/
 *.db
 *.pkl
 *.joblib
+
+.env.example
