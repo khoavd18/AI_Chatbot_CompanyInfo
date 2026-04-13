@@ -25,7 +25,7 @@ def retriever(query: str) -> list[RetrievedDocument]:
     try:
         client: QdrantClient = get_qdrant_client() 
         vectors = embed_texts([query]) # embedding query, dung [query] de tra ve list vi embed nhan list
-        if vectors is None or vectors.size == 0:
+        if not vectors:
             logger.error("Failed to generate embedding for the query.")
             return []
         
@@ -34,6 +34,7 @@ def retriever(query: str) -> list[RetrievedDocument]:
         response = client.query_points( # truy van points tu qdrant
             collection_name=COLLECTION_NAME,
             query=query_vector,
+            using="dense",
             limit=RETRIEVAL_TOP_K,
             with_payload=True, # lay ca payload noi chua text va metadata
             score_threshold=RETRIEVAL_SCORE_THRESHOLD,

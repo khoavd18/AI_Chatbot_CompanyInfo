@@ -6,6 +6,11 @@ from datetime import datetime
 from src.core.setting_loader import load_settings
 from src.rag.chunking.helpers.make_metadata import make_metadata
 from src.rag.chunking.helpers.split_paragraphs import split_paragraphs
+from src.rag.chunking.helpers.text_quality import (
+    is_placeholder_media_text,
+    is_same_or_similar,
+    make_dedupe_key,
+)
 
 settings = load_settings()
 logger = logging.getLogger("ingestion")
@@ -72,6 +77,7 @@ def chunk_hero_slides():
         return []
 
     chunks = []
+    seen_slides = set()
 
     CHUNK_PRIORITY = {
         "overview": 6,
@@ -104,6 +110,20 @@ def chunk_hero_slides():
             continue
 
         display_title = slide_title or f"Hero slide {idx + 1}"
+        slide_key = make_dedupe_key(
+            display_title,
+            slide_subtitle,
+            slide_page,
+            slide_image_alt,
+            slide_video_title,
+        )
+        if slide_key in seen_slides:
+            logger.info("Skipping duplicated hero slide at index %s", idx)
+            continue
+        seen_slides.add(slide_key)
+
+        if is_placeholder_media_text(slide_image_alt, display_title):
+            slide_image_alt = ""
 
         base_metadata = {
             "type": "hero_slide",
@@ -177,34 +197,26 @@ def chunk_hero_slides():
                     priority=CHUNK_PRIORITY["media"],
                 )
             })
-        elif slide_image_url:
-            chunks.append({
-                "text": f"Hero slide {display_title} có hình ảnh minh họa.",
-                "metadata": make_metadata(
-                    base_metadata,
-                    chunk_type="media",
-                    priority=CHUNK_PRIORITY["media"],
-                )
-            })
-
         # 4) VIDEO CHUNK
         if slide_video_title or slide_video_url:
             video_lines = [f"Tiêu đề hero slide: {display_title}"]
 
-            if slide_video_title:
+            if slide_video_title and not is_same_or_similar(slide_video_title, display_title):
                 video_lines.append(f"Tiêu đề video: {slide_video_title}")
 
             if slide_video_url and not slide_video_title:
                 video_lines.append("Hero slide này có video minh họa.")
 
-            chunks.append({
-                "text": _join_non_empty(video_lines),
-                "metadata": make_metadata(
-                    base_metadata,
-                    chunk_type="video",
-                    priority=CHUNK_PRIORITY["video"],
-                )
-            })
+            video_text = _join_non_empty(video_lines)
+            if len(video_lines) > 1 and video_text:
+                chunks.append({
+                    "text": video_text,
+                    "metadata": make_metadata(
+                        base_metadata,
+                        chunk_type="video",
+                        priority=CHUNK_PRIORITY["video"],
+                    )
+                })
 
     logger.info(f"Chunked {len(chunks)} hero slide chunks from {len(hero_slides)} hero slides")
     return chunks

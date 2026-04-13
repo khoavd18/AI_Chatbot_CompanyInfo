@@ -6,6 +6,10 @@ from datetime import datetime
 from src.core.setting_loader import load_settings
 from src.rag.chunking.helpers.make_metadata import make_metadata
 from src.rag.chunking.helpers.split_paragraphs import split_paragraphs
+from src.rag.chunking.helpers.text_quality import (
+    is_low_value_description,
+    is_same_or_similar,
+)
 
 settings = load_settings()
 logger = logging.getLogger("ingestion")
@@ -82,6 +86,8 @@ def chunk_news_categories():
             continue
 
         display_name = news_category_name or news_category_slug
+        if is_low_value_description(news_category_description, display_name):
+            news_category_description = ""
 
         base_metadata = {
             "type": "news_category",
@@ -98,11 +104,8 @@ def chunk_news_categories():
 
         if news_category_description:
             definition_lines.append(f"Mô tả ngắn: {news_category_description}")
-        elif news_category_slug:
+        elif news_category_slug and not is_same_or_similar(news_category_slug, display_name):
             definition_lines.append(f"Slug nhận diện: {news_category_slug}")
-            definition_lines.append("Đây là một danh mục dùng để phân loại các bài viết tin tức của công ty.")
-        else:
-            definition_lines.append("Đây là một danh mục dùng để phân loại các bài viết tin tức của công ty.")
 
         definition_text = _join_non_empty(definition_lines)
         if definition_text:
@@ -134,15 +137,18 @@ def chunk_news_categories():
 
         # 3) SEO CHUNK
         seo_lines = [f"Tên danh mục tin tức: {display_name}"]
+        meaningful_seo = False
 
-        if seo_title:
+        if seo_title and not is_same_or_similar(seo_title, display_name):
             seo_lines.append(f"SEO title: {seo_title}")
+            meaningful_seo = True
 
-        if seo_description:
+        if seo_description and not is_low_value_description(seo_description, display_name):
             seo_lines.append(f"SEO description: {seo_description}")
+            meaningful_seo = True
 
         seo_text = _join_non_empty(seo_lines)
-        if len(seo_lines) > 1:
+        if meaningful_seo and len(seo_lines) > 1:
             chunks.append({
                 "text": seo_text,
                 "metadata": make_metadata(

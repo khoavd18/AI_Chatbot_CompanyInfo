@@ -1,21 +1,65 @@
-version: '3.8'
+version: "3.8"
 
 services:
   qdrant:
     image: qdrant/qdrant:latest
     container_name: qdrant
     ports:
-      - "6333:6333" # rest api
-      - "6334:6334" # web api
+      - "6333:6333"
+      - "6334:6334"
     volumes:
       - ./qdrant_storage:/qdrant/storage
     environment:
-      - QDRANT__SERVICE__GRPC_PORT=6334
-      - QDRANT__SERVICE__HTTP_PORT=6333
-    # healthcheck:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__SERVICE__HTTP_PORT: 6333
     restart: unless-stopped
     networks:
       - chatbot_network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chatbot_api
+    command: uvicorn src.api.routes.app:app --host 0.0.0.0 --port 8000
+    environment:
+      PYTHONPATH: /app
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501,http://ui:8501}
+      LLM_PROVIDER: ${LLM_PROVIDER:-huggingface_local}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-Qwen/Qwen2.5-1.5B-Instruct}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+      LLM_DEVICE: ${LLM_DEVICE:-cpu}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-180}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+      RERANKING_DEVICE: ${RERANKING_DEVICE:-cpu}
+      DEMO_RATE_LIMIT_ENABLED: ${DEMO_RATE_LIMIT_ENABLED:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      - qdrant
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks:
+      - chatbot_network
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chatbot_ui
+    command: streamlit run src/ui/chatbot.py --server.address 0.0.0.0 --server.port 8501
+    environment:
+      PYTHONPATH: /app
+      API_BASE_URL: ${UI_API_BASE_URL:-http://api:8000}
+    depends_on:
+      - api
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+    networks:
+      - chatbot_network
+
 networks:
   chatbot_network:
     driver: bridge

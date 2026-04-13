@@ -16,10 +16,12 @@ handlers:
     stream: ext://sys.stdout
 
   file:
-    class: logging.FileHandler
+    class: logging.handlers.RotatingFileHandler
     level: INFO
     formatter: simple
     filename: logs/application.log
+    maxBytes: 10485760
+    backupCount: 5
 
 # Cau hinh logger cho tung module
 loggers:
@@ -59,6 +61,26 @@ loggers:
     propagate: no
 
   chat:
+    level: INFO
+    handlers: [console, file]
+    propagate: no
+
+  api:
+    level: INFO
+    handlers: [console, file]
+    propagate: no
+
+  health:
+    level: INFO
+    handlers: [console, file]
+    propagate: no
+
+  startup:
+    level: INFO
+    handlers: [console, file]
+    propagate: no
+
+  context_builder:
     level: INFO
     handlers: [console, file]
     propagate: no

@@ -6,6 +6,11 @@ from datetime import datetime
 from src.core.setting_loader import load_settings
 from src.rag.chunking.helpers.make_metadata import make_metadata
 from src.rag.chunking.helpers.split_paragraphs import split_paragraphs
+from src.rag.chunking.helpers.text_quality import (
+    is_low_value_description,
+    is_placeholder_media_text,
+    is_same_or_similar,
+)
 
 settings = load_settings()
 logger = logging.getLogger("ingestion")
@@ -86,6 +91,11 @@ def chunk_architecture_types():
             continue
 
         display_name = architecture_name or architecture_slug
+        if is_low_value_description(architecture_description, display_name):
+            architecture_description = ""
+
+        if is_placeholder_media_text(image_alt, display_name):
+            image_alt = ""
 
         base_metadata = {
             "type": "architecture_type",
@@ -103,16 +113,9 @@ def chunk_architecture_types():
 
         if architecture_description:
             definition_lines.append(f"Mô tả ngắn: {architecture_description}")
-        elif architecture_slug:
+        elif architecture_slug and not is_same_or_similar(architecture_slug, display_name):
             definition_lines.append(
                 f"Slug nhận diện: {architecture_slug}"
-            )
-            definition_lines.append(
-                "Đây là một phong cách kiến trúc có trong hệ thống dữ liệu của công ty."
-            )
-        else:
-            definition_lines.append(
-                "Đây là một phong cách kiến trúc có trong hệ thống dữ liệu của công ty."
             )
 
         definition_text = _join_non_empty(definition_lines)
@@ -145,15 +148,18 @@ def chunk_architecture_types():
 
         # 3) SEO CHUNK
         seo_lines = [f"Tên phong cách kiến trúc: {display_name}"]
+        meaningful_seo = False
 
-        if seo_title:
+        if seo_title and not is_same_or_similar(seo_title, display_name):
             seo_lines.append(f"SEO title: {seo_title}")
+            meaningful_seo = True
 
-        if seo_description:
+        if seo_description and not is_low_value_description(seo_description, display_name):
             seo_lines.append(f"SEO description: {seo_description}")
+            meaningful_seo = True
 
         seo_text = _join_non_empty(seo_lines)
-        if len(seo_lines) > 1:
+        if meaningful_seo and len(seo_lines) > 1:
             chunks.append({
                 "text": seo_text,
                 "metadata": make_metadata(
@@ -177,15 +183,5 @@ def chunk_architecture_types():
                     priority=CHUNK_PRIORITY["media"],
                 )
             })
-        elif image_url:
-            chunks.append({
-                "text": f"Phong cách kiến trúc {display_name} có hình ảnh minh họa.",
-                "metadata": make_metadata(
-                    base_metadata,
-                    chunk_type="media",
-                    priority=CHUNK_PRIORITY["media"],
-                )
-            })
-
     logger.info(f"Chunked {len(chunks)} architecture type chunks from {len(architecture_types)} architecture types")
     return chunks

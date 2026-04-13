@@ -1,92 +1,12 @@
-# import logging
-# from typing import List
-
-# from qdrant_client import QdrantClient
-# from qdrant_client.models import ScoredPoint
-# from qdrant_client.http.exceptions import ResponseHandlingException
-
-# from src.core.setting_loader import load_settings
-# from src.core.schema import RetrievedDocument
-# from src.rag.vectorstore.qdrant import get_qdrant_client
-# from src.rag.embedding.embed_text import embed_texts
-# from src.rag.retrieval.scoring.bm25 import BM25
-
-# settings = load_settings()
-# logger = logging.getLogger("retrieval")
-
-# COLLECTION_NAME = settings["vector_database"]["collection_name"]
-# RETRIEVAL_CONFIG = settings["retrieval"]
-# TOP_K = RETRIEVAL_CONFIG.get("top_k", 10)
-# SCORE_THRESHOLD = RETRIEVAL_CONFIG.get("score_threshold", 0.0)
-# DENSE_WEIGHT = RETRIEVAL_CONFIG.get("dense_weight", 0.6)
-# BM25_WEIGHT = RETRIEVAL_CONFIG.get("bm25_weight", 0.4)
-
-# def hybrid_retrieve(query: str, bm25: BM25) -> List[RetrievedDocument]:
-#     if not query or not query.strip():
-#         logger.warning("Empty query received for hybrid retrieval.")
-#         return []
-
-#     try:
-#         client: QdrantClient = get_qdrant_client()
-#         dense_vectors = embed_texts([query])
-#         if not dense_vectors:
-#             logger.error("Failed to embed query.")
-#             return []
-
-#         query_vector = dense_vectors[0]
-
-#         response = client.query_points(
-#             collection_name=COLLECTION_NAME,
-#             query=query_vector,
-#             using="dense",  # specify named vector for hybrid search
-#             limit=TOP_K * 3,  # lấy dư để rerank
-#             with_payload=True,
-#             score_threshold=SCORE_THRESHOLD,
-#         )
-
-#         points: list[ScoredPoint] = response.points
-#         documents: list[RetrievedDocument] = []
-
-#         for point in points:
-#             payload = point.payload or {}
-#             text = payload.get("text", "")
-
-#             if not text:
-#                 continue
-
-#             bm25_score = bm25.score(query, text)
-#             hybrid_score = (DENSE_WEIGHT * point.score + BM25_WEIGHT * bm25_score)
-
-#             documents.append(
-#                 RetrievedDocument(
-#                     id=str(point.id),
-#                     score=hybrid_score,
-#                     text=text,
-#                     metadata={
-#                         **{k: v for k, v in payload.items() if k != "text"},
-#                         "dense_score": point.score,
-#                         "bm25_score": bm25_score,
-#                     },
-#                 )
-#             )
-
-#         documents.sort(key=lambda d: d.score, reverse=True)
-#         return documents[:TOP_K]
-    
-#     except ResponseHandlingException as e:
-#         logger.error(f"Qdrant connection error: {e}")
-#         raise ConnectionError("Cannot connect to vector database")
-#     except Exception as e:
-#         logger.error(f"Error during retrieval: {e}", exc_info=True)
-#         return []
-
-
 import logging
+import re
+import time
+import unicodedata
 from typing import List
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import ScoredPoint
 from qdrant_client.http.exceptions import ResponseHandlingException
+from qdrant_client.models import ScoredPoint
 
 from src.core.schema import RetrievedDocument
 from src.core.setting_loader import load_settings
@@ -108,22 +28,76 @@ BM25_WEIGHT = RETRIEVAL_CONFIG.get("bm25_weight", 0.4)
 RRF_K = 60
 
 
+def _strip_accents(text: str) -> str:
+    normalized = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", text or "")
+        if not unicodedata.combining(character)
+    )
+    return normalized.replace("đ", "d").replace("Đ", "D")
+
+
+def _normalize(text: str) -> str:
+    plain = _strip_accents(text).lower()
+    return re.sub(r"\s+", " ", plain).strip()
+
+
+def _contains_marker(text: str, marker: str) -> bool:
+    normalized_text = _normalize(text)
+    normalized_marker = _normalize(marker)
+    if not normalized_text or not normalized_marker:
+        return False
+
+    if " " in normalized_marker:
+        return f" {normalized_marker} " in f" {normalized_text} "
+
+    return normalized_marker in set(normalized_text.split())
+
+
+def _contains_any(text: str, markers: list[str]) -> bool:
+    return any(_contains_marker(text, marker) for marker in markers)
+
+
 def _infer_intent(query: str) -> str:
-    q = query.lower()
+    company_keywords = [
+        "cong ty",
+        "hotline",
+        "email",
+        "dia chi",
+        "website",
+        "gio lam viec",
+        "lien he",
+        "the manh",
+        "linh vuc",
+        "dich vu",
+        "chuyen ve",
+        "nang luc",
+        "nhan vien",
+        "nhan su",
+        "nhan luc",
+        "ky su",
+        "kien truc su",
+    ]
+    project_keywords = ["du an", "cong trinh", "dia diem", "chu dau tu", "dien tich", "hoan thanh"]
+    news_keywords = ["tin tuc", "bai viet", "xu huong", "moi nhat", "blog", "tin moi"]
+    category_keywords = ["danh muc", "chuyen muc", "loai hinh"]
+    style_keywords = ["phong cach", "style", "japandi", "modern", "luxury", "tan co dien", "hien dai", "tropical"]
+    media_keywords = ["hinh anh", "anh", "thumbnail", "video", "clip", "minh hoa"]
 
-    company_keywords = ["công ty", "hotline", "email", "địa chỉ", "website", "giờ làm việc", "liên hệ"]
-    project_keywords = ["dự án", "công trình", "địa điểm", "chủ đầu tư", "diện tích", "hoàn thành"]
-    news_keywords = ["tin tức", "bài viết", "xu hướng", "mới nhất", "blog", "tin mới"]
-    style_keywords = ["phong cách", "kiến trúc", "nội thất", "style", "japandi", "modern", "luxury", "tân cổ điển"]
-
-    if any(k in q for k in company_keywords):
-        return "company"
-    if any(k in q for k in project_keywords):
+    if _contains_any(query, media_keywords):
+        return "media"
+    if _contains_any(query, category_keywords) and _contains_any(query, project_keywords):
+        return "project_category"
+    if _contains_any(query, category_keywords) and _contains_any(query, news_keywords):
+        return "news_category"
+    if _contains_any(query, project_keywords):
         return "project"
-    if any(k in q for k in news_keywords):
-        return "news"
-    if any(k in q for k in style_keywords):
+    if _contains_any(query, style_keywords):
         return "style"
+    if _contains_any(query, news_keywords):
+        return "news"
+    if _contains_any(query, company_keywords):
+        return "company"
     return "general"
 
 
@@ -132,13 +106,20 @@ def _source_boost(intent: str, doc: RetrievedDocument) -> float:
     chunk_type = doc.metadata.get("chunk_type", "")
     boost = 0.0
 
-    # intent boost
     if intent == "company":
         if source_type == "company_info":
             boost += 0.05
         if chunk_type == "contact_info":
             boost += 0.05
-
+        if chunk_type == "stats":
+            boost += 0.06
+    elif intent == "project_category":
+        if source_type == "project_category":
+            boost += 0.08
+        elif source_type == "project":
+            boost += 0.02
+        if chunk_type in {"definition", "description"}:
+            boost += 0.03
     elif intent == "project":
         if source_type == "project":
             boost += 0.05
@@ -146,7 +127,13 @@ def _source_boost(intent: str, doc: RetrievedDocument) -> float:
             boost += 0.02
         if chunk_type in {"overview", "context", "specs", "full_content"}:
             boost += 0.02
-
+    elif intent == "news_category":
+        if source_type == "news_category":
+            boost += 0.08
+        elif source_type == "news":
+            boost += 0.02
+        if chunk_type in {"definition", "description"}:
+            boost += 0.03
     elif intent == "news":
         if source_type == "news":
             boost += 0.05
@@ -154,36 +141,40 @@ def _source_boost(intent: str, doc: RetrievedDocument) -> float:
             boost += 0.02
         if chunk_type in {"overview", "full_content", "meta"}:
             boost += 0.02
-
     elif intent == "style":
         if source_type in {"architecture_type", "interior_style"}:
             boost += 0.05
         if chunk_type in {"definition", "description"}:
             boost += 0.02
+    elif intent == "media":
+        if chunk_type in {"media", "video"}:
+            boost += 0.08
+        if source_type in {"project", "news", "hero_slide", "interior_style", "architecture_type", "company_info"}:
+            boost += 0.02
 
-    # chunk-type prior
     if chunk_type == "overview":
         boost += 0.02
     elif chunk_type == "definition":
         boost += 0.02
     elif chunk_type == "contact_info":
         boost += 0.03
+    elif chunk_type == "stats":
+        boost += 0.03
     elif chunk_type in {"context", "specs", "full_content", "description"}:
         boost += 0.01
     elif chunk_type == "seo":
         boost -= 0.005
     elif chunk_type in {"media", "video", "icon"}:
-        boost -= 0.02
+        boost += 0.01 if intent == "media" else -0.02
 
-    # source prior
     if source_type == "hero_slide":
-        boost -= 0.01
+        boost -= 0.01 if intent != "media" else 0.0
 
     return boost
 
 
 def _exact_name_boost(query: str, doc: RetrievedDocument) -> float:
-    q = query.lower()
+    q = _normalize(query)
     candidate_fields = [
         doc.metadata.get("project_name", ""),
         doc.metadata.get("news_item_title", ""),
@@ -196,14 +187,14 @@ def _exact_name_boost(query: str, doc: RetrievedDocument) -> float:
     ]
 
     for field in candidate_fields:
-        field = str(field).strip().lower()
-        if field and field in q:
+        normalized_field = _normalize(str(field).strip())
+        if normalized_field and normalized_field in q:
             return 0.03
 
     return 0.0
 
 
-def _get_source_limits(intent: str) -> dict:
+def _get_source_limits(intent: str) -> dict[str, int]:
     if intent == "company":
         return {
             "company_info": 3,
@@ -212,6 +203,17 @@ def _get_source_limits(intent: str) -> dict:
             "architecture_type": 1,
             "interior_style": 1,
             "project_category": 1,
+            "news_category": 1,
+            "hero_slide": 1,
+        }
+    if intent == "project_category":
+        return {
+            "project_category": 4,
+            "project": 2,
+            "company_info": 1,
+            "news": 1,
+            "architecture_type": 1,
+            "interior_style": 1,
             "news_category": 1,
             "hero_slide": 1,
         }
@@ -224,6 +226,17 @@ def _get_source_limits(intent: str) -> dict:
             "architecture_type": 1,
             "interior_style": 1,
             "news_category": 1,
+            "hero_slide": 1,
+        }
+    if intent == "news_category":
+        return {
+            "news_category": 4,
+            "news": 2,
+            "project": 1,
+            "company_info": 1,
+            "architecture_type": 1,
+            "interior_style": 1,
+            "project_category": 1,
             "hero_slide": 1,
         }
     if intent == "news":
@@ -248,6 +261,17 @@ def _get_source_limits(intent: str) -> dict:
             "news_category": 1,
             "hero_slide": 1,
         }
+    if intent == "media":
+        return {
+            "project": 3,
+            "news": 2,
+            "hero_slide": 2,
+            "interior_style": 2,
+            "architecture_type": 2,
+            "company_info": 1,
+            "project_category": 1,
+            "news_category": 1,
+        }
     return {
         "project": 4,
         "news": 3,
@@ -269,8 +293,12 @@ def hybrid_retrieve(query: str, bm25: BM25, top_k: int | None = None) -> List[Re
     intent = _infer_intent(query)
 
     try:
+        overall_start = time.perf_counter()
         client: QdrantClient = get_qdrant_client()
+
+        embed_start = time.perf_counter()
         dense_vectors = embed_texts([query])
+        embed_ms = (time.perf_counter() - embed_start) * 1000
         if not dense_vectors:
             logger.error("Failed to embed query.")
             return []
@@ -278,7 +306,7 @@ def hybrid_retrieve(query: str, bm25: BM25, top_k: int | None = None) -> List[Re
         query_vector = dense_vectors[0]
         dense_limit = max(top_k * 6, 30)
 
-        # 1) Dense candidates từ Qdrant
+        qdrant_start = time.perf_counter()
         dense_response = client.query_points(
             collection_name=COLLECTION_NAME,
             query=query_vector,
@@ -287,10 +315,11 @@ def hybrid_retrieve(query: str, bm25: BM25, top_k: int | None = None) -> List[Re
             with_payload=True,
             score_threshold=SCORE_THRESHOLD,
         )
+        qdrant_ms = (time.perf_counter() - qdrant_start) * 1000
 
         dense_points: list[ScoredPoint] = dense_response.points
-        dense_docs_by_id = {}
-        dense_rank_by_id = {}
+        dense_docs_by_id: dict[str, RetrievedDocument] = {}
+        dense_rank_by_id: dict[str, int] = {}
 
         for rank, point in enumerate(dense_points, start=1):
             payload = point.payload or {}
@@ -303,31 +332,33 @@ def hybrid_retrieve(query: str, bm25: BM25, top_k: int | None = None) -> List[Re
                 score=float(point.score),
                 text=text,
                 metadata={
-                    **{k: v for k, v in payload.items() if k != "text"},
+                    **{key: value for key, value in payload.items() if key != "text"},
                     "dense_score": float(point.score),
                 },
             )
             dense_docs_by_id[doc.id] = doc
             dense_rank_by_id[doc.id] = rank
 
-        # 2) Sparse/BM25 candidates trên toàn corpus
         corpus_docs = get_corpus_documents()
         if not corpus_docs:
             logger.warning("Corpus documents not available in startup cache.")
             return list(dense_docs_by_id.values())[:top_k]
 
-        bm25_scored = []
+        bm25_start = time.perf_counter()
+        bm25_scored: list[tuple[RetrievedDocument, float]] = []
         for doc in corpus_docs:
             score = bm25.score(query, doc.text)
             if score > 0:
                 bm25_scored.append((doc, score))
+        bm25_ms = (time.perf_counter() - bm25_start) * 1000
 
-        bm25_scored.sort(key=lambda x: x[1], reverse=True)
+        merge_start = time.perf_counter()
+        bm25_scored.sort(key=lambda item: item[1], reverse=True)
         sparse_limit = max(top_k * 6, 30)
         sparse_candidates = bm25_scored[:sparse_limit]
 
-        sparse_rank_by_id = {}
-        sparse_docs_by_id = {}
+        sparse_rank_by_id: dict[str, int] = {}
+        sparse_docs_by_id: dict[str, RetrievedDocument] = {}
         for rank, (doc, score) in enumerate(sparse_candidates, start=1):
             copied_doc = RetrievedDocument(
                 id=doc.id,
@@ -341,7 +372,6 @@ def hybrid_retrieve(query: str, bm25: BM25, top_k: int | None = None) -> List[Re
             sparse_docs_by_id[copied_doc.id] = copied_doc
             sparse_rank_by_id[copied_doc.id] = rank
 
-        # 3) Merge dense + sparse
         merged_ids = set(dense_docs_by_id.keys()) | set(sparse_docs_by_id.keys())
         merged_docs: list[RetrievedDocument] = []
 
@@ -376,12 +406,11 @@ def hybrid_retrieve(query: str, bm25: BM25, top_k: int | None = None) -> List[Re
                 )
             )
 
-        merged_docs.sort(key=lambda d: d.score, reverse=True)
+        merged_docs.sort(key=lambda doc: doc.score, reverse=True)
 
-        # 4) Source balancing
         source_limits = _get_source_limits(intent)
-        source_counts = {}
-        final_docs = []
+        source_counts: dict[str, int] = {}
+        final_docs: list[RetrievedDocument] = []
 
         for doc in merged_docs:
             source_type = doc.metadata.get("type", "unknown")
@@ -397,16 +426,26 @@ def hybrid_retrieve(query: str, bm25: BM25, top_k: int | None = None) -> List[Re
             if len(final_docs) >= top_k:
                 break
 
-        logger.info(
-            f"Hybrid retrieved {len(final_docs)} docs | "
-            f"intent={intent} | dense_candidates={len(dense_docs_by_id)} | sparse_candidates={len(sparse_candidates)}"
-        )
+        merge_ms = (time.perf_counter() - merge_start) * 1000
+        total_ms = (time.perf_counter() - overall_start) * 1000
 
+        logger.info(
+            "Hybrid retrieved %s docs | intent=%s | dense_candidates=%s | sparse_candidates=%s | latency_ms total=%.2f embed=%.2f qdrant=%.2f bm25=%.2f merge=%.2f",
+            len(final_docs),
+            intent,
+            len(dense_docs_by_id),
+            len(sparse_candidates),
+            total_ms,
+            embed_ms,
+            qdrant_ms,
+            bm25_ms,
+            merge_ms,
+        )
         return final_docs
 
-    except ResponseHandlingException as e:
-        logger.error(f"Qdrant connection error: {e}")
+    except ResponseHandlingException as error:
+        logger.error("Qdrant connection error: %s", error)
         raise ConnectionError("Cannot connect to vector database")
-    except Exception as e:
-        logger.error(f"Error during retrieval: {e}", exc_info=True)
+    except Exception as error:
+        logger.error("Error during retrieval: %s", error, exc_info=True)
         return []

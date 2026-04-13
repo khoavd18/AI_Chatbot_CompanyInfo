@@ -27,6 +27,7 @@ temp/
 Thumbs.db
 .vscode/
 .idea/
+.cph/
 
 # Environment variables / secrets
 .env
@@ -37,7 +38,7 @@ Thumbs.db
 .huggingface/
 hf_cache/
 cache/
-models/
+/models/
 checkpoints/
 
 # Data
@@ -54,5 +55,3 @@ storage/
 *.db
 *.pkl
 *.joblib
-
-env.example

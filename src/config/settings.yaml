@@ -39,17 +39,19 @@ llm:
   # model_name: qwen2.5:3b
   # base_url: http://localhost:11434
   # temperature: 0.2
-  # max_tokens: 1024              # Giảm từ 1024 → 512 để nhanh hơn
+  # max_tokens: 384               # Câu trả lời RAG thường ngắn, giữ thấp để nhanh và đỡ lan man
   # timeout: 300 
   
   provider: huggingface_local
   model_name: Qwen/Qwen2.5-1.5B-Instruct
+  base_url: http://localhost:11434
   temperature: 0.1
-  max_tokens: 1024
+  max_tokens: 384
   timeout: 180
   device: auto           # auto | cpu | cuda
   trust_remote_code: false
-  load_in_8bit: false               
+  load_in_8bit: false
+  enable_fallback: false   # false = chi tra loi grounded, khong goi LLM fallback mac dinh
 
 # Cau hinh RAG
 retrieval:

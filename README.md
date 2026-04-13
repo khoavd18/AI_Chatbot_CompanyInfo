@@ -1,467 +1,394 @@
-# Nguyen Vo Dang Khoa Architects — Hybrid RAG Chatbot
+# Nguyen Vo Dang Khoa Architects RAG Chatbot
 
-> A domain-specific Retrieval-Augmented Generation (RAG) chatbot for an architecture & interior design company, built with **FastAPI + Streamlit + Qdrant + hybrid retrieval (dense + BM25-style sparse) + local LLM**.
+Hybrid RAG chatbot cho dữ liệu công ty kiến trúc/nội thất, gồm:
 
----
+- FastAPI backend
+- Streamlit UI
+- Qdrant vector database
+- Hybrid retrieval (dense + BM25-style sparse)
+- Cross-encoder reranking
+- Local LLM generation
 
-## Overview
+## Những gì đã được chỉnh trong repo này
 
-This project is a **local-first AI assistant** designed to answer questions about a company’s:
+- Sửa lệch answer trước/sau rerank: answer grounded, context LLM và `sources` giờ đều bám cùng tập document sau rerank.
+- Đồng bộ contract backend/UI cho `sources`, `debug`, `latency`, `request_id`.
+- Đồng bộ config LLM giữa `settings.yaml`, `env.example` và runtime env override.
+- Thêm logging + latency theo request/stage.
+- Backend chuyển sang stateless; rate-limit in-memory chỉ còn là chế độ demo tùy chọn.
+- Thêm Docker để chạy Qdrant + API + UI.
+- Thêm bộ evaluation 40 câu và script chấm end-to-end.
 
-- company profile and contact information
-- projects and project categories
-- architecture types and interior styles
-- news articles and hero content
-
-Instead of relying on generic web search or a remote closed API, the system uses a **custom knowledge base**, domain-specific chunking, hybrid retrieval, reranking, and a local LLM generation pipeline.
-
-The main goal is to build a chatbot that is:
-
-- **more accurate on company-specific content** than a general-purpose LLM
-- **structured like a production AI feature** rather than a single notebook/demo
-- **easy to extend** with more data sources, better retrieval logic, and cleaner evaluation
-
----
-
-## Why this project matters
-
-From an engineering perspective, this project demonstrates end-to-end AI application development across:
-
-- **data ingestion and normalization**
-- **domain-aware chunking**
-- **dense + sparse retrieval**
-- **reranking**
-- **API serving**
-- **UI integration**
-- **debugging and iterative quality improvement**
-
-This is not just a “call an LLM” demo. The repo is structured around the same concerns that appear in real AI product work:
-
-- data quality affects retrieval quality
-- chunk design affects answer quality
-- retrieval errors propagate to generation
-- generation quality depends on both prompt design and context quality
-- vector database lifecycle and indexing strategy matter in practice
-
----
-
-## Key features
-
-- **Domain-specific chunking** for each entity type:
-  - `companyInfo`
-  - `projects`
-  - `projectCategories`
-  - `news`
-  - `newsCategories`
-  - `architectureTypes`
-  - `interiorStyles`
-  - `heroSlides`
-- **Hybrid retrieval** using:
-  - dense embeddings with `intfloat/multilingual-e5-small`
-  - sparse lexical scoring with a custom BM25-style sparse embedder
-- **Cross-encoder reranking** for better top-k document selection
-- **Qdrant** as vector database with hybrid vectors (dense + sparse)
-- **FastAPI backend** for serving chatbot endpoints
-- **Streamlit UI** for quick interaction and demo usage
-- **Local LLM generation** using Hugging Face models (e.g. Qwen Instruct)
-- **Structured pipeline** for chunking, embedding, and indexing
-
----
-
-## System architecture
+## Kiến trúc nhanh
 
 ```text
-Raw / processed company data
-        ↓
-Domain-aware chunking per entity type
-        ↓
-Dense embedding + sparse representation
-        ↓
-Qdrant hybrid index
-        ↓
-Dense retrieval + sparse/BM25 scoring
-        ↓
-Cross-encoder reranking
-        ↓
-Context builder
-        ↓
-Local LLM generation
-        ↓
-FastAPI response / Streamlit UI
+processed JSON data
+  -> chunking theo entity
+  -> embedding dense + sparse
+  -> Qdrant hybrid index
+  -> hybrid retrieve
+  -> rerank
+  -> grounded answer / LLM answer
+  -> FastAPI
+  -> Streamlit UI
 ```
 
----
+## Yêu cầu
 
-## Project structure
+- Python 3.10+
+- Docker Desktop hoặc Docker Engine + Compose
+- RAM đủ để chạy embedding/reranker/LLM bạn chọn
 
-```text
-src/
-├── api/
-│   └── routes/
-│       ├── app.py
-│       ├── chat.py
-│       └── health.py
-├── config/
-│   ├── logging.yaml
-│   └── settings.yaml
-├── core/
-│   ├── logging_setup.py
-│   ├── schema.py
-│   ├── setting_loader.py
-│   └── startup.py
-├── llm/
-│   ├── generator.py
-│   └── prompt.py
-├── rag/
-│   ├── chunking/
-│   │   ├── architectureType.py
-│   │   ├── companyInfo.py
-│   │   ├── heroSlides.py
-│   │   ├── interiorStyles.py
-│   │   ├── news.py
-│   │   ├── newsCategories.py
-│   │   ├── projectCategories.py
-│   │   ├── projects.py
-│   │   └── helpers/
-│   ├── embedding/
-│   │   ├── batch_embed_text.py
-│   │   ├── embed_text.py
-│   │   └── sparse_embeder.py
-│   ├── retrieval/
-│   │   ├── context_builder.py
-│   │   ├── hybrid_retriever.py
-│   │   ├── retriever.py
-│   │   ├── scoring/
-│   │   └── reranking/
-│   └── vectorstore/
-│       ├── hybrid_index.py
-│       ├── index.py
-│       ├── qdrant.py
-│       └── upsert.py
-├── pipeline.py
-└── ui/
-    └── chatbot.py
+## Cấu hình
+
+Repo dùng `src/config/settings.yaml` làm default và cho phép override bằng env vars.
+
+File mẫu: `env.example`
+
+Khi chạy local, các entrypoint chính như API, UI và pipeline sẽ tự động load file `.env` ở thư mục root của project bằng `python-dotenv`.
+Biến môi trường đã export sẵn trong shell vẫn giữ ưu tiên cao hơn `.env`.
+
+Các biến quan trọng:
+
+- `QDRANT_URL`: URL Qdrant
+- `RAW_DATA_FILE`: đường dẫn file raw JSON cho `python data/load_data.py`
+- `LLM_PROVIDER`: `huggingface_local` hoặc `ollama`
+- `LLM_MODEL_NAME`: tên model theo provider
+- `LLM_BASE_URL`: dùng cho Ollama
+- `LLM_DEVICE`: `cpu`, `cuda`, `auto`
+- `LLM_ENABLE_FALLBACK`: `false` mặc định; nếu `true` thì mới cho phép route chat dùng LLM fallback khi grounded answer không đủ
+- `EMBEDDING_DEVICE`: `cpu` hoặc `cuda`
+- `RERANKING_DEVICE`: `cpu` hoặc `cuda`
+- `DEMO_RATE_LIMIT_ENABLED`: `false` mặc định; nếu bật thì chỉ là rate-limit in-memory cho demo local
+
+## Chạy Local End-to-End trên Windows PowerShell
+
+Các bước dưới đây giả định bạn đang đứng ở thư mục root của repo sau khi `git clone`.
+
+### 1. Tạo môi trường ảo
+
+```powershell
+python -m venv .venv
 ```
 
----
+### 2. Kích hoạt môi trường ảo
 
-## Technical stack
-
-### Backend
-- **Python 3.10+**
-- **FastAPI**
-- **Uvicorn**
-
-### Retrieval / ML
-- **Transformers / Hugging Face**
-- **Qwen/Qwen2.5-1.5B-Instruct** (local generation)
-- **intfloat/multilingual-e5-small** (dense embeddings)
-- **cross-encoder/ms-marco-MiniLM-L-6-v2** (reranker)
-- custom **SparseEmbedder** + **BM25-style scoring**
-
-### Vector DB
-- **Qdrant**
-
-### UI
-- **Streamlit**
-
----
-
-## Data model
-
-The project uses a structured business dataset centered around an architecture/interior design company.
-
-Main entity groups:
-
-- `companyInfo`
-- `projects`
-- `projectCategories`
-- `news`
-- `newsCategories`
-- `architectureTypes`
-- `interiorStyles`
-- `heroSlides`
-
-A major design decision in this project is that **each entity type is chunked differently**, instead of using a generic “split every document by length” strategy.
-
-### Example
-A `project` is not treated as a single blob. It can be chunked into:
-
-- `overview`
-- `full_content`
-- `context`
-- `specs`
-- `seo`
-- `media`
-
-This improves retrieval precision for questions like:
-
-- “Which project is in Bình Tân?”
-- “What is the area of project X?”
-- “Show full information for project Y.”
-- “Which projects match Japandi style?”
-
----
-
-## Retrieval design
-
-### 1. Dense retrieval
-Dense embeddings are generated with `multilingual-e5-small`, which is suitable for Vietnamese and short semantic search queries.
-
-### 2. Sparse retrieval
-A custom sparse embedding / BM25-like scorer is built over the indexed corpus to preserve exact-keyword behavior.
-
-### 3. Hybrid retrieval
-The system combines:
-
-- semantic relevance from dense embeddings
-- lexical relevance from sparse/BM25 scoring
-
-This is especially important for company/product/project names, addresses, and style names.
-
-### 4. Reranking
-A cross-encoder reranker is used to improve final document ordering before context is passed to the LLM.
-
-### 5. Context building
-Retrieved chunks are transformed into a bounded, structured context block before answer generation.
-
----
-
-## Engineering decisions
-
-### Why hybrid retrieval instead of dense-only?
-Dense retrieval is good for semantic similarity, but company/project queries often depend on:
-
-- exact names
-- addresses
-- phone numbers
-- category labels
-- style labels
-
-Adding sparse/BM25 behavior improves robustness for these cases.
-
-### Why custom chunking instead of naive text splitting?
-Because the dataset is highly structured.
-
-For example:
-
-- `companyInfo` is better split into contact / overview / brand / stats
-- `projects` benefit from content-aware chunks
-- `news` benefit from overview + full_content + meta
-- `styles` benefit from definition + description + SEO metadata
-
-### Why local LLM?
-A local model allows:
-
-- offline / low-cost experimentation
-- better control of prompting and inference
-- a realistic AI engineering workflow for local development
-
----
-
-## What I improved during development
-
-This project was iteratively refined instead of being built as a one-shot demo.
-
-Examples of improvements made during debugging:
-
-- reduced noisy or weak chunks
-- improved `projects` chunking to prioritize rich `content`
-- improved `news` chunking to avoid overly long overview chunks
-- added metadata consistency across chunkers
-- added `heroSlides` into the indexing pipeline
-- reduced retrieval noise by improving chunk type design
-- improved vector index rebuild behavior to avoid duplicated points
-- improved context construction to reduce LLM echoing raw metadata
-- improved generation guardrails to reduce repetition and malformed output
-
----
-
-## How to run
-
-### 1. Create environment
-
-```bash
-python -m venv env
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
-**Windows PowerShell**
-```bash
-.\env\Scripts\Activate.ps1
+### 3. Cài dependency
+
+```powershell
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-### 2. Install dependencies
+### 4. Copy file `.env`
 
-```bash
-pip install -r requirements.txt
+```powershell
+Copy-Item env.example .env
 ```
 
-If your project uses `pyproject.toml`, use your preferred package manager instead.
+Sau khi copy, các lệnh `python data/load_data.py`, `python -m src.pipeline`,
+`uvicorn src.api.routes.app:app ...` và `python -m streamlit run src/ui/chatbot.py`
+sẽ tự đọc `.env` mà không cần `set` hay `export` thủ công trước.
 
-### 3. Start Qdrant
+Nếu UI cần trỏ sang API khác, bạn có thể thêm vào `.env`:
 
-```bash
-docker compose up -d
+```env
+API_BASE_URL=http://127.0.0.1:8000
 ```
 
-### 4. Build / rebuild the index
+Nếu bạn dùng `huggingface_local`, giữ mặc định hoặc chỉnh `LLM_MODEL_NAME` / `LLM_DEVICE`.
 
-```bash
+Mặc định hệ thống đang chạy theo hướng `grounded-only`: nếu không có câu trả lời đủ chắc từ dữ liệu đã retrieve/rerank thì API sẽ không tự động fallback sang LLM.
+
+Nếu bạn dùng Ollama, đổi tối thiểu:
+
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL_NAME=qwen2.5:3b
+LLM_BASE_URL=http://localhost:11434
+```
+
+### 5. Chạy Qdrant
+
+```powershell
+docker compose up -d qdrant
+```
+
+### 6. Load data raw sang `data/processed`
+
+```powershell
+python data/load_data.py
+```
+
+Script này hỗ trợ 3 cách chọn file raw theo thứ tự ưu tiên:
+
+1. `--input <path>`
+2. Biến môi trường `RAW_DATA_FILE` trong shell hoặc `.env`
+3. File mặc định cũ
+
+File mặc định hiện tại là:
+
+- `data/raw/database_export_nguyen_vo_dang_khoa_completed.json`
+
+Repo hiện đã có sẵn file raw mẫu này, nên sau khi clone bạn có thể chạy ngay `python data/load_data.py`.
+
+Ví dụ dùng file mặc định:
+
+```powershell
+python data/load_data.py
+```
+
+Ví dụ truyền file trực tiếp:
+
+```powershell
+python data/load_data.py --input data/raw/database_export_nguyen_vo_dang_khoa_completed.json
+```
+
+Ví dụ dùng `.env`:
+
+```env
+RAW_DATA_FILE=data/raw/database_export_nguyen_vo_dang_khoa_completed.json
+```
+
+Sau đó chạy:
+
+```powershell
+python data/load_data.py
+```
+
+Script sẽ log rõ chính xác file raw nào đang được dùng. Nếu path không tồn tại, script sẽ báo lỗi dễ hiểu và thoát với mã lỗi khác `0`.
+
+### 7. Chạy pipeline để build / update index an toàn
+
+```powershell
 python -m src.pipeline
 ```
 
-### 5. Start the API
+Lệnh mặc định sẽ `upsert` vào collection hiện có và không recreate collection cũ.
+Nếu bạn cần full rebuild có chủ đích, dùng:
 
-```bash
-uvicorn src.api.routes.app:app --reload
+```powershell
+python -m src.pipeline --recreate-collection
 ```
 
-### 6. Start the UI
+### 8. Chạy API
 
-```bash
-streamlit run src/ui/chatbot.py
+```powershell
+uvicorn src.api.routes.app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
----
+### 9. Chạy UI
 
-## Example questions
+Mở một PowerShell khác, kích hoạt lại `.venv`, rồi chạy:
 
-- `Cho tôi thông tin công ty`
-- `Hotline công ty là gì?`
-- `Địa chỉ công ty ở đâu?`
-- `Công ty có những phong cách nội thất nào?`
-- `Phong cách Japandi là gì?`
-- `Dự án nào ở Bình Tân?`
-- `Cho tôi thông tin dự án Văn phòng sáng tạo d-one studio`
-- `Có bài viết nào về xu hướng thiết kế không?`
+```powershell
+python -m streamlit run src/ui/chatbot.py
+```
 
----
+### 10. Mở ứng dụng
 
-## Example API endpoints
+- UI: `http://localhost:8501`
+- Swagger: `http://localhost:8000/docs`
+- Health: `http://localhost:8000/health`
+- Readiness: `http://localhost:8000/readiness`
 
-### Health check
+## Lỗi thường gặp
+
+### 1. Streamlit launcher path issue
+
+Nếu `streamlit run ...` báo lỗi không tìm thấy launcher hoặc dùng nhầm Python, hãy luôn chạy theo dạng:
+
+```powershell
+python -m streamlit run src/ui/chatbot.py
+```
+
+Cách này dùng đúng interpreter của `.venv` đang active và ổn định hơn trên Windows.
+
+### 2. `.env` không hoạt động
+
+Kiểm tra các điểm sau:
+
+- File phải nằm đúng ở root của repo: `.env`
+- Sau khi sửa `.env`, hãy chạy lại pipeline/API/UI để nạp cấu hình mới
+- Biến môi trường đã export sẵn trong PowerShell sẽ ưu tiên hơn `.env`
+
+Kiểm tra nhanh:
+
+```powershell
+@'
+import os
+from src.core.setting_loader import ensure_env_loaded
+
+ensure_env_loaded()
+print(os.getenv("QDRANT_URL"))
+'@ | python -
+```
+
+### 3. Qdrant chưa chạy
+
+Nếu pipeline hoặc API báo lỗi không kết nối được Qdrant, hãy khởi động lại:
+
+```powershell
+docker compose up -d qdrant
+```
+
+Bạn có thể kiểm tra nhanh:
+
+- `http://localhost:6333/dashboard`
+- `http://localhost:8000/health`
+
+## Chạy Bằng Docker
+
+### 1. Build image
+
+```powershell
+docker compose build
+```
+
+### 2. Khởi động Qdrant
+
+```powershell
+docker compose up -d qdrant
+```
+
+### 3. Build index từ container API
+
+```powershell
+docker compose run --rm api python -m src.pipeline
+```
+
+Nếu cần full rebuild collection trong Docker:
+
+```powershell
+docker compose run --rm api python -m src.pipeline --recreate-collection
+```
+
+### 4. Khởi động API + UI
+
+```powershell
+docker compose up -d api ui
+```
+
+### 5. Truy cập
+
+- UI: `http://localhost:8501`
+- API: `http://localhost:8000`
+
+Ghi chú với Ollama trong Docker:
+
+- Docker Desktop: có thể dùng `LLM_BASE_URL=http://host.docker.internal:11434`
+- Linux: đổi `LLM_BASE_URL` sang IP host hoặc reverse proxy phù hợp
+
+## API Contract
+
+### Request
+
 ```http
-GET /health
-```
-
-### Chat endpoint
-```http
-POST /chat
+POST /api/chat
 Content-Type: application/json
 
 {
-  "query": "Cho tôi thông tin công ty"
+  "query": "Hotline công ty là gì?",
+  "debug": true,
+  "top_k": 10,
+  "session_id": "optional-client-session-id"
 }
 ```
 
----
+### Response
 
-## Current limitations
-
-This project is already functional, but there are still areas for improvement:
-
-- evaluation set and automated retrieval benchmarking are still limited
-- generation quality depends heavily on prompt and context cleanliness
-- local LLM output can still degrade on ambiguous or poorly specified questions
-- query disambiguation for vague requests can be improved further
-- data quality still matters a lot when synthetic/fallback content exists
-- deployment is local/dev-oriented rather than production-hardened
-
----
-
-## Next steps
-
-Planned improvements that would make this project even stronger:
-
-- add a formal evaluation suite for retrieval and answer quality
-- add query rewriting / query classification
-- add metadata-based filtering and better source balancing
-- improve ambiguous project selection flow
-- cache model loading and optimize generation latency further
-- add screenshots / demo GIFs to improve portfolio presentation
-- add CI checks and a cleaner public repo structure
-
----
-
-## What this project shows about my engineering profile
-
-This project reflects how I approach AI systems:
-
-- I do not treat LLMs as magic black boxes
-- I care about data quality, retrieval design, and system structure
-- I can debug issues across the full stack:
-  - data
-  - chunking
-  - vector indexing
-  - retrieval
-  - reranking
-  - prompting
-  - inference behavior
-- I can build AI features in a way that is closer to product engineering than notebook experimentation
-
----
-
-## Notes for recruiters / interviewers
-
-If you are reviewing this repository for an AI Engineer / Applied AI / ML Engineer role, the most relevant technical sections are:
-
-- `src/rag/chunking/` → domain-aware data modeling and chunk design
-- `src/rag/retrieval/` → retrieval, BM25-style scoring, reranking, context building
-- `src/rag/vectorstore/` → Qdrant integration and indexing
-- `src/api/routes/chat.py` → serving layer and orchestration
-- `src/llm/` → generation pipeline and answer control
-
-This repo is best understood as an **engineering-focused RAG application**, not just a model demo.
-
----
-
-## Repository hygiene recommendation
-
-For a public GitHub version, do **not** push:
-
-- local virtual environments
-- Hugging Face caches
-- vector database storage
-- raw private company data
-- `.env` files or secrets
-
-Typical `.gitignore` should include things like:
-
-```gitignore
-env/
-.venv/
-__pycache__/
-*.log
-.env
-qdrant_storage/
-storage/
-data/raw/
-data/processed/
+```json
+{
+  "answer": "Hotline của Nguyen Vo Dang Khoa Architects là: 0909.268.416",
+  "session_id": "...",
+  "request_id": "...",
+  "latency": {
+    "retrieval_ms": 52.4,
+    "rerank_ms": 31.8,
+    "answer_ms": 2.1,
+    "total_ms": 89.7
+  },
+  "sources": [
+    {
+      "index": 1,
+      "title": "Nguyen Vo Dang Khoa Architects",
+      "source_type": "company_info",
+      "chunk_type": "contact_info",
+      "doc_id": "...",
+      "snippet": "...",
+      "scores": {
+        "hybrid": 0.123,
+        "dense": 0.987,
+        "bm25": 3.214,
+        "rerank": 7.654
+      }
+    }
+  ],
+  "debug": []
+}
 ```
 
----
+## Evaluation
 
-## Contact
+Repo có sẵn bộ eval 40 câu trong `evaluation/eval_cases.py`.
 
-If needed, this section can be customized with:
+### Validate dataset
 
-- your name
-- LinkedIn
-- GitHub
-- portfolio
-- email
+```powershell
+python evaluation/run_eval.py --validate-only
+```
 
-For a portfolio-ready version, I recommend replacing this section with your real professional links.
+### Chạy eval với API local
 
----
+```powershell
+python evaluation/run_eval.py --api-base http://127.0.0.1:8000 --output evaluation/report.json
+```
 
-## License
+### Chạy nhanh vài câu đầu
 
-Add a license if you plan to make this repository public.
+```powershell
+python evaluation/run_eval.py --api-base http://127.0.0.1:8000 --limit 10
+```
 
-Suggested options:
+## Logging và Latency
 
-- MIT
-- Apache-2.0
+- Log file: `logs/application.log`
+- Có `request_id` và tổng thời gian xử lý ở middleware API
+- Chat endpoint trả breakdown `retrieval_ms`, `rerank_ms`, `answer_ms`, `total_ms`
+- Có thể đổi mức log bằng `LOG_LEVEL`
 
----
+## Demo-Only Note
+
+Backend hiện stateless ở phía server.
+
+- Không còn lưu lịch sử chat in-memory để phục vụ logic trả lời.
+- `session_id` chỉ dùng để client/UI tự gắn cuộc hội thoại cho dễ theo dõi.
+- `DEMO_RATE_LIMIT_ENABLED=true` chỉ nên dùng khi demo local vì đây là rate-limit in-memory, không phù hợp production hay multi-instance.
+
+## Một vài câu hỏi mẫu
+
+- `Cho tôi thông tin công ty`
+- `Hotline công ty là gì?`
+- `Công ty có những phong cách nội thất nào?`
+- `Dự án nào ở Bình Tân?`
+- `Cho tôi biết về dự án Căn hộ gia đình Phúc Đạt mẫu Japandi`
+- `Có bài viết nào về xu hướng thiết kế nhà phố hiện đại 2026 không?`
+
+## Cấu trúc thư mục chính
+
+```text
+src/
+  api/routes/         FastAPI routes
+  core/               schema, settings, logging, startup
+  llm/                prompt + generation + grounded answer
+  rag/                chunking, retrieval, reranking, vector store
+  ui/                 Streamlit app
+
+evaluation/
+  eval_cases.py       40 câu eval
+  run_eval.py         script chấm end-to-end
+```

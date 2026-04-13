@@ -6,6 +6,10 @@ from datetime import datetime
 from src.core.setting_loader import load_settings
 from src.rag.chunking.helpers.make_metadata import make_metadata
 from src.rag.chunking.helpers.split_paragraphs import split_paragraphs
+from src.rag.chunking.helpers.text_quality import (
+    is_low_value_description,
+    is_same_or_similar,
+)
 
 settings = load_settings()
 logger = logging.getLogger("ingestion")
@@ -84,6 +88,8 @@ def chunk_project_categories():
             continue
 
         display_name = category_name or category_slug
+        if is_low_value_description(category_description, display_name):
+            category_description = ""
 
         base_metadata = {
             "type": "project_category",
@@ -101,11 +107,8 @@ def chunk_project_categories():
 
         if category_description:
             definition_lines.append(f"Mô tả ngắn: {category_description}")
-        elif category_slug:
+        elif category_slug and not is_same_or_similar(category_slug, display_name):
             definition_lines.append(f"Slug nhận diện: {category_slug}")
-            definition_lines.append("Đây là một danh mục dùng để phân loại các dự án của công ty.")
-        else:
-            definition_lines.append("Đây là một danh mục dùng để phân loại các dự án của công ty.")
 
         definition_text = _join_non_empty(definition_lines)
         if definition_text:
@@ -137,36 +140,24 @@ def chunk_project_categories():
 
         # 3) SEO CHUNK
         seo_lines = [f"Tên danh mục dự án: {display_name}"]
+        meaningful_seo = False
 
-        if seo_title:
+        if seo_title and not is_same_or_similar(seo_title, display_name):
             seo_lines.append(f"SEO title: {seo_title}")
+            meaningful_seo = True
 
-        if seo_description:
+        if seo_description and not is_low_value_description(seo_description, display_name):
             seo_lines.append(f"SEO description: {seo_description}")
+            meaningful_seo = True
 
         seo_text = _join_non_empty(seo_lines)
-        if len(seo_lines) > 1:
+        if meaningful_seo and len(seo_lines) > 1:
             chunks.append({
                 "text": seo_text,
                 "metadata": make_metadata(
                     base_metadata,
                     chunk_type="seo",
                     priority=CHUNK_PRIORITY["seo"],
-                )
-            })
-
-        # 4) ICON CHUNK
-        if category_icon:
-            icon_text = _join_non_empty([
-                f"Tên danh mục dự án: {display_name}",
-                f"Biểu tượng danh mục: {category_icon}",
-            ])
-            chunks.append({
-                "text": icon_text,
-                "metadata": make_metadata(
-                    base_metadata,
-                    chunk_type="icon",
-                    priority=CHUNK_PRIORITY["icon"],
                 )
             })
 
